@@ -216,3 +216,9 @@ fabric.properties
 
 #####=== User ===#####
 /.idea
+
+# tomstark99
+*.ckpt
+*.pkl
+/notebooks/data/*
+

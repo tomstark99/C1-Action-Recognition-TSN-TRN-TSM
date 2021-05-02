@@ -14,7 +14,7 @@ class PickleFeatureWriter(FeatureWriter):
         self.features = []
         self.labels = []
         
-    def append(self, narration_id: str, featues: np.ndarray, labels: Dict[str, Any]) -> None:
+    def append(self, narration_id: str, features: np.ndarray, labels: Dict[str, Any]) -> None:
         assert features.shape[1] == self.features_dim
         self.narration_ids.append(narration_id)
         self.features.append(features)

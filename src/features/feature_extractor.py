@@ -1,9 +1,12 @@
 from typing import Dict, Any
-from tdqm import tdqm
+from tqdm import tqdm
+from gulpio2 import GulpDirectory
 
 import numpy as np
 import torch as t
 import torch.nn as nn
+
+from .pkl import PickleFeatureWriter
 
 class FeatureExtractor:
     """
@@ -22,12 +25,22 @@ class FeatureExtractor:
         self.dtype = dtype
         self.frame_batch_size = frame_batch_size
     
-    def extract(self, dataset: GulpDirectory, feature_writer: FeatureWriter) -> int:
+    def extract(self, dataset: GulpDirectory, feature_writer: PickleFeatureWriter) -> int:
         total_instances = 0
         self.model.eval()
-        for i, c in enumerate(tqdm(dataset)):
+        for i, c in tqdm(
+            enumerate(dataset),
+            unit=" chunk",
+            total=dataset.num_chunks,
+            dynamic_ncols=True
+        ):
             if i == 0:
-                for batch_input, batch_labels in c:
+                for i, (batch_input, batch_labels) in tqdm(
+                    enumerate(c),
+                    unit=" video",
+                    total=len(c.meta_dict),
+                    dynamic_ncols=True
+                ):
         
                     batch_input = np.array(batch_input).transpose(0,3,1,2)
                     batch_input = t.tensor(batch_input, device=self.device, dtype=self.dtype)
@@ -56,9 +69,9 @@ class FeatureExtractor:
 
     def _append(self, batch_features, batch_labels, batch_size, feature_writer):
         batch_narration_id = batch_labels['narration_id']
-        batch_features = batch_features.cpu().numpy()
-        assert len(batch_narration_id) == batch_size
-        assert len(batch_labels) == batch_size
+        assert len([batch_narration_id]) == batch_size
+        assert len([batch_labels]) == batch_size
         assert len(batch_features) == batch_size
-
+        batch_features = batch_features.squeeze(0).cpu().numpy()
+#         print(batch_narration_id, "DONE")
         feature_writer.append(batch_narration_id, batch_features, batch_labels)

@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Dict, List
 
 import torch
-from torch.utils.data import DataLoader, Dataset as TorchDataset
 
 from omegaconf import OmegaConf
 
@@ -16,6 +15,8 @@ from systems import EpicActionRecogintionDataModule
 
 from features.feature_extractor import FeatureExtractor
 from features.pkl import PickleFeatureWriter
+
+from ipdb import launch_ipdb_on_exception
 
 parser = argparse.ArgumentParser(
     description="Extract per-frame features from given dataset and backbone",
@@ -54,9 +55,10 @@ def main(args):
     rgb_train = GulpDirectory(args.gulp_dir)
 
     extractor = FeatureExtractor(model.model.to(device), device, dtype, frame_batch_size=args.batch_size)
-    total_instances = extract_features_to_pkl(
-        rgb_train, extractor, args.features_pickle, args.feature_dim
-    )
+    with launch_ipdb_on_exception():
+        total_instances = extract_features_to_pkl(
+            rgb_train, extractor, args.features_pickle, args.feature_dim
+        )
 
     print(f"extracted {total_instances} features.")
 

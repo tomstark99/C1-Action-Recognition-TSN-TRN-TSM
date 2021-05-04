@@ -8,6 +8,7 @@ from typing import Tuple
 
 import pytorch_lightning as pl
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from datasets import EpicVideoDataset
 from datasets import EpicVideoFlowDataset
@@ -333,3 +334,71 @@ def load_model(cfg: DictConfig) -> TSN:
             state_dict = state_dict["state_dict"]
         model.load_state_dict(state_dict)
     return model
+
+class EpicActionRecogintionShapleyClassifier:
+    
+    def __init__(self, 
+        model: nn.Module, 
+        dataloader: DataLoader, 
+        optimiser: SGD, 
+        device: torch.device, 
+        log_interval: int = 100
+    ):
+        self.model = model
+        self.dataloader = dataloader
+        self.optimiser = optimiser
+        self.device = device
+        self.log_interval = log_interval
+        
+    def _step(self, batch: Tuple[torch.Tensor, Dict[str, Any]]) -> Dict[str, Any]:
+
+        data, labels = batch
+        self.optimiser.zero_grad()
+        outputs = self.model(data.to(self.device))
+        tasks = {
+            'verb': {
+                'output': outputs[:,:97],
+                'preds': outputs[:,:97].argmax(-1),
+                'labels': labels['verb_class'],
+                'weight': 1
+            },
+            'noun': {
+                'output': outputs[:,97:],
+                'preds': outputs[:,97:].argmax(-1),
+                'labels': labels['noun_class'],
+                'weight': 1
+            },
+        }
+        
+        step_results = dict()
+        loss = 0.0
+        n_tasks = len(tasks)
+        for task, d in tasks.items():
+            task_loss = F.cross_entropy(d['output'], d['labels'].to(self.device))
+            loss += d['weight'] * task_loss
+            
+        step_results['narration_id'] = labels['narration_id']
+        step_results['loss'] = loss / n_tasks
+        return step_results
+        
+    def train(self, epoch):
+        self.model.train()
+        running_loss = 0.0
+        current_loss = 0.0
+        for batch_idx, data in enumerate(self.dataloader):
+            
+            step_results = self._step(data)
+            loss = step_results['loss']
+            
+            loss.backward()
+            self.optimiser.step()
+            
+            running_loss += loss.item()
+            current_loss = loss.item()
+            
+            if batch_idx % self.log_interval == 0:
+                print('[%d, %5d] loss: %.3f' %
+                      (epoch + 1, batch_idx + 1, running_loss / self.log_interval))
+                running_loss = 0.0
+        
+        return current_loss

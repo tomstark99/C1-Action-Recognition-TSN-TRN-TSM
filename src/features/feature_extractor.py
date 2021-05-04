@@ -44,14 +44,15 @@ class FeatureExtractor:
                 ):
                 
                     batch_input = np.array(batch_input).transpose(0,3,1,2)
-                    batch_input = t.tensor(batch_input, device=self.device, dtype=self.dtype)
+                    batch_input = t.tensor(batch_input, dtype=self.dtype)
                     batch_input = batch_input.unsqueeze(0)
 
                     batch_size, n_frames = batch_input.shape[:2]
                     flattened_batch_input = batch_input.view((-1, *batch_input.shape[2:]))
 
-                    n_chunks = int(np.ceil(len(flattened_batch_input)/128))
+                    n_chunks = int(np.ceil(len(flattened_batch_input)/self.frame_batch_size))
                     chunks = t.chunk(flattened_batch_input, n_chunks, dim=0)
+                    # print(n_chunks, len(flattened_batch_input), batch_labels['narration_id'])
                     flatten_batch_features = []
                     for chunk in chunks:
                         chunk = chunk.unsqueeze(0)

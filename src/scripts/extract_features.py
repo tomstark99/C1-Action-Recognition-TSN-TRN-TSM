@@ -31,15 +31,15 @@ parser.add_argument("--feature_dim", type=int, default=256, help="Number of feat
 def main(args):
 
     # SETUP TORCH VARIABLES
-    print("SETUP TORCH VARIABLES")
+    # print("SETUP TORCH VARIABLES")
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     dtype = torch.float
-    print("SETUP TORCH VARIABLES DONE")
+    # print("SETUP TORCH VARIABLES DONE")
 
     # LOAD IN SAVED CHECKPOINT
-    print("LOAD IN SAVED CHECKPOINT")
+    # print("LOAD IN SAVED CHECKPOINT")
     ckpt = torch.load(args.checkpoint, map_location='cpu')
-    print("LOAD IN SAVED CHECKPOINT DONE")
+    # print("LOAD IN SAVED CHECKPOINT DONE")
     # CREATE CONFIG FROM CHECKPOINT
     cfg = OmegaConf.create(ckpt['hyper_parameters'])
     OmegaConf.set_struct(cfg, False)
@@ -48,10 +48,10 @@ def main(args):
     cfg.data._root_gulp_dir = str(args.gulp_dir)
 
     # CREATE MODEL
-    print("CREATE MODEL")
+    # print("CREATE MODEL")
     model = EpicActionRecognitionSystem(cfg)
     model.load_state_dict(ckpt['state_dict'])
-    print("CREATE MODEL DONE")
+    # print("CREATE MODEL DONE")
     rgb_train = GulpDirectory(args.gulp_dir)
 
     extractor = FeatureExtractor(model.model.to(device), device, dtype, frame_batch_size=args.batch_size)

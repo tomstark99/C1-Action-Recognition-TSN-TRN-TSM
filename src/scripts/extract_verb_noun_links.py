@@ -24,21 +24,21 @@ def main(args):
     verbs = pd.read_csv(args.verb_classes)
     nouns = pd.read_csv(args.noun_classes)
 
-    verb_noun_unique = {}
+    verb_noun = {}
 
     dataset = GulpDirectory(args.gulp_dir)
 
-    verb_noun_unique = extract_verb_noun_links(
+    verb_noun = extract_verb_noun_links(
         dataset,
         verbs, 
         nouns, 
-        verb_noun_unique,
+        verb_noun,
         classes=args.classes,
         narration=args.narration_id)
 
     with open(args.verb_noun_pickle, 'wb') as f:
         pickle.dump({
-            verb: list(set(verb_noun_unique[verb])) for verb in verb_noun_unique.keys()
+            verb: unique_list(verb_noun[verb]) for verb in verb_noun.keys()
         }, f)
 
 def extract_verb_noun_links(
@@ -62,12 +62,17 @@ def extract_verb_noun_links(
                 else:
                     output_dict[batch_labels['verb_class']] = [(batch_labels['noun_class'], batch_labels['narration_id']) if narration else batch_labels['noun_class']]
             else:
+                # lookup has to be performed to get the direct verb / noun rather than the instance
                 if verbs['key'][batch_labels['verb_class']] in output_dict:
                     output_dict[verbs['key'][batch_labels['verb_class']]].append((nouns['key'][batch_labels['noun_class']], batch_labels['narration_id']) if narration else nouns['key'][batch_labels['noun_class']])
                 else:
                     output_dict[verbs['key'][batch_labels['verb_class']]] = [(nouns['key'][batch_labels['noun_class']], batch_labels['narration_id']) if narration else nouns['key'][batch_labels['noun_class']]]
 
     return output_dict
+
+def unique_list(list):
+    seen = set()
+    return [x for x in list if not (x in seen or seen.add(x))]
 
 # def extract_verb_noun_links(
 #     dataset: GulpDirectory,

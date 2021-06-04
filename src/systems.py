@@ -6,6 +6,7 @@ from typing import List
 from typing import Optional
 from typing import Tuple
 
+import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
@@ -339,22 +340,26 @@ class EpicActionRecogintionShapleyClassifier:
     
     def __init__(self, 
         model: nn.Module, 
-        dataloader: DataLoader, 
-        optimiser: SGD, 
         device: torch.device, 
+        optimiser: SGD, 
+        trainloader: DataLoader,
+        testloader: DataLoader = None, 
         log_interval: int = 100
     ):
         self.model = model
-        self.dataloader = dataloader
-        self.optimiser = optimiser
         self.device = device
+        self.optimiser = optimiser
+        self.trainloader = trainloader
+        self.testloader = testloader
         self.log_interval = log_interval
         
     def _step(self, batch: Tuple[torch.Tensor, Dict[str, Any]]) -> Dict[str, Any]:
 
         data, labels = batch
-        self.optimiser.zero_grad()
-        outputs = self.model(data.to(self.device))
+
+        outputs = self.model(data.to(device))
+
+        """ TODO: for combined verb/noun
         tasks = {
             'verb': {
                 'output': outputs[:,:97],
@@ -369,24 +374,49 @@ class EpicActionRecogintionShapleyClassifier:
                 'weight': 1
             },
         }
-        
+        """
+        tasks = {
+            'verb': {
+                'output': outputs,
+                'preds': outputs.argmax(-1),
+                'labels': labels['verb_class'],#.to(self.device),
+                'weight': 1
+            }
+        }
         step_results = dict()
         loss = 0.0
         n_tasks = len(tasks)
         for task, d in tasks.items():
-            task_loss = F.cross_entropy(d['output'], d['labels'].to(self.device))
+            task_loss = F.cross_entropy(d['output'], d['labels'].to(device))
             loss += d['weight'] * task_loss
+            
+            accuracy_1, accuracy_5 = accuracy(d["output"], d["labels"].to(device), ks=(1, 5))
+            step_results[f"{task}_accuracy@1"] = accuracy_1
+            step_results[f"{task}_accuracy@5"] = accuracy_5
+
+            step_results[f"{task}_loss"] = task_loss
+            step_results[f"{task}_preds"] = d["preds"]
+            step_results[f"{task}_output"] = d["output"]
             
         step_results['narration_id'] = labels['narration_id']
         step_results['loss'] = loss / n_tasks
         return step_results
+
+    def forward(self, xs):
+        return self.model(xs)
+    
+    def forward_tasks(self, xs: torch.Tensor) -> Dict[str, torch.Tensor]:
+        return split_task_outputs(self(xs), TASK_CLASS_COUNTS)
         
     def train(self, epoch):
-        self.model.train()
+        # self.model.train()
         running_loss = 0.0
-        current_loss = 0.0
-        for batch_idx, data in enumerate(self.dataloader):
+        training_loss = []
+
+        for batch_idx, data in enumerate(self.trainloader):
             
+            self.optimiser.zero_grad()
+
             step_results = self._step(data)
             loss = step_results['loss']
             
@@ -394,11 +424,32 @@ class EpicActionRecogintionShapleyClassifier:
             self.optimiser.step()
             
             running_loss += loss.item()
-            current_loss = loss.item()
+            training_loss.append(loss.item())
             
-            if batch_idx % self.log_interval == 0:
-                print('[%d, %5d] loss: %.3f' %
-                      (epoch + 1, batch_idx + 1, running_loss / self.log_interval))
+            if batch_idx % self.log_interval == self.log_interval-1:
+                print('[%d, %5d] loss: %.3f' % (epoch + 1, batch_idx + 1, running_loss / self.log_interval))
                 running_loss = 0.0
         
-        return current_loss
+        return np.array(training_loss)
+
+    def test(self, epoch):
+
+        running_loss = 0.0
+        test_loss = []
+
+        for batch_idx, data in enumerate(self.testloader):
+
+            step_results = self._step(data)
+
+            loss = step_results['loss']
+
+            running_loss += loss.item()
+            test_loss.append(loss.item())
+
+        return np.array(test_loss)
+
+    def save_parameters(self, path: Path):
+        torch.save(self.model.state_dict(), path)
+
+    def load_parameters(self, path: Path):
+        self.model.load_state_dict(torch.load(path))

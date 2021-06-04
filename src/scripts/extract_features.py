@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import Dict, List
 
 import torch
+import torch.multiprocessing
+from torch.utils.data import Subset
 
 from omegaconf import OmegaConf
 
@@ -15,6 +17,7 @@ from systems import EpicActionRecogintionDataModule
 
 from features.feature_extractor import FeatureExtractor
 from features.pkl import PickleFeatureWriter
+from datasets.gulp_dataset import GulpDataset
 
 from ipdb import launch_ipdb_on_exception
 
@@ -25,62 +28,50 @@ parser = argparse.ArgumentParser(
 parser.add_argument("gulp_dir", type=Path, help="Path to gulp directory")
 parser.add_argument("checkpoint", type=Path, help="Path to model checkpoint")
 parser.add_argument("features_pickle", type=Path, help="Path to pickle file to save features")
+parser.add_argument("--num_workers", type=int, default=1, help="Number of features expected from frame")
 parser.add_argument("--batch_size", type=int, default=128, help="Max frames to run through backbone 2D CNN at a time")
 parser.add_argument("--feature_dim", type=int, default=256, help="Number of features expected from frame")
 
 def main(args):
 
-    # SETUP TORCH VARIABLES
-    # print("SETUP TORCH VARIABLES")
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     dtype = torch.float
-    # print("SETUP TORCH VARIABLES DONE")
 
-    # LOAD IN SAVED CHECKPOINT
-    # print("LOAD IN SAVED CHECKPOINT")
     ckpt = torch.load(args.checkpoint, map_location='cpu')
-    # print("LOAD IN SAVED CHECKPOINT DONE")
-    # CREATE CONFIG FROM CHECKPOINT
     cfg = OmegaConf.create(ckpt['hyper_parameters'])
     OmegaConf.set_struct(cfg, False)
 
-    # SET GULP DIRECTORY
     cfg.data._root_gulp_dir = str(args.gulp_dir)
 
-    # CREATE MODEL
-    # print("CREATE MODEL")
     model = EpicActionRecognitionSystem(cfg)
     model.load_state_dict(ckpt['state_dict'])
-    # print("CREATE MODEL DONE")
-    rgb_train = GulpDirectory(args.gulp_dir)
+    
+    dataset = GulpDataset(args.gulp_dir)
+    feature_writer = PickleFeatureWriter(args.features_pickle, features_dim=args.feature_dim)
+    dataset_subsample = Subset(dataset, torch.arange(feature_writer.length, len(dataset)))
 
-    extractor = FeatureExtractor(model.model.to(device), device, dtype, frame_batch_size=args.batch_size)
+    extractor = FeatureExtractor(model.model.to(device), device, dtype, dataset_subsample, frame_batch_size=args.batch_size)
     with launch_ipdb_on_exception():
         total_instances = extract_features_to_pkl(
-            rgb_train, extractor, args.features_pickle, args.feature_dim
+            extractor, feature_writer, args.feature_dim, args.num_workers
         )
 
     print(f"extracted {total_instances} features.")
 
 def extract_features_to_pkl(
-    gulp_dir: GulpDirectory,
     feature_extractor: FeatureExtractor,
-    features_path: Path,
-    feature_dim: int
+    feature_writer: PickleFeatureWriter,
+    feature_dim: int,
+    num_workers: int
 ):
     total_instances = 0
     
-    print("PICKLE WRITER AND LOAD")
-    feature_writer = PickleFeatureWriter(features_path, features_dim=feature_dim)
+    dataloader = feature_extractor.get_dataloader(num_workers=num_workers)
+    torch.multiprocessing.set_sharing_strategy('file_system')
 
-    feature_writer.load()
-
-    print(f"chunk no {feature_writer.chunk_no}")
-    print("PICKLE WRITER AND LOAD DONE")
-
-    total_instances += feature_extractor.extract(gulp_dir, feature_writer)
-
+    total_instances += feature_extractor.extract(dataloader, feature_writer)
     feature_writer.save()
+
     return total_instances
 
 if __name__ == "__main__":

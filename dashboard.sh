@@ -1,0 +1,1 @@
+python src/apps/esv_dashboard/visualise_esvs.py mtrn-esv-min_n_frames\=1-max_n_frames\=8.pkl /media/eve/SCRATCH/epic-100/p01-frames/ datasets/epic/labels/EPIC_100_verb_classes.csv datasets/epic/labels/EPIC_100_noun_classes.csv datasets/epic/labels/

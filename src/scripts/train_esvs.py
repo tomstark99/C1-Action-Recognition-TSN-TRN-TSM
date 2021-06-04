@@ -3,11 +3,12 @@ import logging
 
 from multiprocessing import cpu_count
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import torch
 from torch.optim import SGD
-from torch.utils.data import DataLoader, Dataset
+from torch.optim import Adam
+from torch.utils.data import DataLoader, Dataset, SubsetRandomSampler
 
 from systems import EpicActionRecogintionShapleyClassifier
 
@@ -17,7 +18,8 @@ from frame_sampling import RandomSampler
 
 from ipdb import launch_ipdb_on_exception
 
-import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+import numpy as np
 
 parser = argparse.ArgumentParser(
     description="Extract per-frame features from given dataset and backbone",
@@ -25,10 +27,24 @@ parser = argparse.ArgumentParser(
 )
 parser.add_argument("pickle_dir", type=Path, help="Path to pickle file to save features")
 parser.add_argument("--n_frames", type=int, default=8, help="Number of frames for 2D CNN backbone")
+parser.add_argument("--save_params", type=Path, help="Save model parameters")
 parser.add_argument("--test", type=bool, default=False, help="Set test mode to true or false on the RandomSampler")
 parser.add_argument("--batch_size", type=int, default=128, help="mini-batch size of frame features to run through ")
+parser.add_argument("--epoch", type=int, default=100, help="How many epochs to do over the dataset")
 parser.add_argument("--log_interval", type=int, default=10, help="How many iterations between outputting running loss")
 parser.add_argument("--save_fig", type=Path, help="Save a graph showing lr / loss")
+
+def train_test_loader(dataset: PickleDatset, batch_size: int, val_split: float) -> Tuple[DataLoader, DataLoader]:
+
+    idxs = list(range(len(dataset)))
+    split = int(np.floor(val_split * len(dataset)))
+    np.random.shuffle(idxs)
+
+    train_idx, test_idx = idxs[split:], idxs[:split]
+
+    train_sampler = SubsetRandomSampler(train_idx)
+    test_sampler = SubsetRandomSampler(test_idx)
+    return DataLoader(dataset, batch_size=batch_size, sampler=train_sampler), DataLoader(dataset, batch_size=batch_size, sampler=test_sampler)
 
 def main(args):
 
@@ -38,30 +54,61 @@ def main(args):
     frame_sampler = RandomSampler(frame_count=args.n_frames, snippet_length=1, test=False)
 
     dataset = PickleDataset(args.pickle_dir, frame_sampler)
-    dataloader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True)
+    trainloader, testloader = train_test_loader(dataset, args.batch_size, 0.3)
 
     model = Net(frame_count=args.n_frames).to(device)
+    optimiser = Adam(model.parameters(), lr=3e-4)
+    classifier = EpicActionRecogintionShapleyClassifier(
+        model, 
+        device,
+        optimiser,
+        trainloader,
+        testloader,
+        log_interval=args.log_interval
+    )
 
-    lr = [1e-1, 1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7, 1e-8, 1e-9]
+    if args.test:
+        test()
+    else:
+        train(classifier, args)
+    
+
+def test():
+    return 0
+
+def train(
+    classifier: EpicActionRecogintionShapleyClassifier,
+    args
+):
+    lr = 3e-4
     loss = []
 
-    for l in lr:
-        optimiser = SGD(model.parameters(), lr=l, momentum=0.9)
-        classifier = EpicActionRecogintionShapleyClassifier(model, dataloader, optimiser, device, log_interval=args.log_interval)
-        running_loss = 0.0
-        for epoch in range(2):
-            running_loss = classifier.train(epoch)
+    for epoch in range(args.epoch):
+        loss.append(classifier.train())
 
-        loss.append(running_loss)
+    if args.save_params:
+        classifier.save_parameters(args.save_params)
+
+    loss = np.concatenate(loss)
 
     if args.save_fig:
-        assert len(lr) == len(loss)
+        x = np.linspace(1, len(loss), len(loss), dtype=int)
 
-        fig, ax = plt.subplots(figsize=(12,7))
-        print(lr, loss)
-        ax.set_xscale('log')
-        ax.plot(lr, loss)
-        fig.savefig(args.save_fig)
+        fig = go.Figure()
+
+        fig.add_trace(go.Scatter(
+            x=x,
+            y=loss
+        ))
+
+        fig.update_layout(
+            xaxis_title='batched steps',
+            yaxis_title='loss',
+            title='training performance'
+        )
+        fig.update_yaxes(type='log')
+        fig.write_image(args.save_fig)
+
 
 if __name__ == "__main__":
     main(parser.parse_args())

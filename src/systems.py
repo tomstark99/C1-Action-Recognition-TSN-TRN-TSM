@@ -21,6 +21,7 @@ from torch.optim.lr_scheduler import MultiStepLR
 from torch.utils.data import ConcatDataset
 from torch.utils.data import DataLoader
 from torchvision.transforms import Compose
+from torchvideo.samplers import frame_idx_to_list
 from transforms import ExtractTimeFromChannel, GroupNDarrayToPILImage
 from transforms import GroupCenterCrop
 from transforms import GroupMultiScaleCrop
@@ -30,6 +31,8 @@ from transforms import GroupScale
 from transforms import Stack
 from transforms import ToTorchFormatTensor
 from utils.torch_metrics import accuracy
+
+from frame_sampling import FrameSampler
 
 from models.tsm import TSM
 from models.tsn import MTRN
@@ -342,6 +345,7 @@ class EpicActionRecogintionShapleyClassifier:
         model: nn.Module, 
         device: torch.device, 
         optimiser: SGD, 
+        frame_sampler: FrameSampler,
         trainloader: DataLoader,
         testloader: DataLoader = None, 
         log_interval: int = 100
@@ -349,6 +353,7 @@ class EpicActionRecogintionShapleyClassifier:
         self.model = model
         self.device = device
         self.optimiser = optimiser
+        self.frame_sampler = frame_sampler
         self.trainloader = trainloader
         self.testloader = testloader
         self.log_interval = log_interval
@@ -357,7 +362,7 @@ class EpicActionRecogintionShapleyClassifier:
 
         data, labels = batch
 
-        outputs = self.model(data.to(device))
+        outputs = self.model(data.to(self.device))
 
         """ TODO: for combined verb/noun
         tasks = {
@@ -387,10 +392,10 @@ class EpicActionRecogintionShapleyClassifier:
         loss = 0.0
         n_tasks = len(tasks)
         for task, d in tasks.items():
-            task_loss = F.cross_entropy(d['output'], d['labels'].to(device))
+            task_loss = F.cross_entropy(d['output'], d['labels'].to(self.device))
             loss += d['weight'] * task_loss
             
-            accuracy_1, accuracy_5 = accuracy(d["output"], d["labels"].to(device), ks=(1, 5))
+            accuracy_1, accuracy_5 = accuracy(d["output"], d["labels"].to(self.device), ks=(1, 5))
             step_results[f"{task}_accuracy@1"] = accuracy_1
             step_results[f"{task}_accuracy@5"] = accuracy_5
 
@@ -402,51 +407,82 @@ class EpicActionRecogintionShapleyClassifier:
         step_results['loss'] = loss / n_tasks
         return step_results
 
+    def _sample_frames(self, data: List[Tuple[np.ndarray, Dict[str, Any]]]) -> Tuple[torch.FloatTensor, Dict[str, Any]]:
+        features = []
+        labels = {}
+        for feature, label in data:
+            video_length = feature.shape[0]
+            if video_length < self.frame_sampler.frame_count:
+                raise ValueError(f"Video too short to sample {self.frame_sampler.frame_count} from")
+            idxs = np.array(frame_idx_to_list(self.frame_sampler.sample(video_length)))
+            features.append(feature[idxs])
+            for k in label.keys():
+                if k in labels:
+                    labels[k].append(label[k])
+                else:
+                    labels[k] = [label[k]]
+
+        for k in labels.keys():
+            try:
+                labels[k] = torch.tensor(labels[k])
+            except ValueError:
+                pass
+
+        return torch.tensor(features, dtype=torch.float), labels
+
     def forward(self, xs):
         return self.model(xs)
     
     def forward_tasks(self, xs: torch.Tensor) -> Dict[str, torch.Tensor]:
         return split_task_outputs(self(xs), TASK_CLASS_COUNTS)
         
-    def train(self, epoch):
+    def train_step(self) -> Dict[str, Any]:
         # self.model.train()
-        running_loss = 0.0
-        training_loss = []
+        training_loss = {
+            f'{self.model.frame_count}_loss': [],
+            f'{self.model.frame_count}_acc1': [],
+            f'{self.model.frame_count}_acc5': []
+        }
 
         for batch_idx, data in enumerate(self.trainloader):
             
             self.optimiser.zero_grad()
+            step_results = self._step(self._sample_frames(data))
 
-            step_results = self._step(data)
             loss = step_results['loss']
-            
+            acc1 = step['verb_accuracy@1']
+            acc5 = step['verb_accuracy@5']
+
             loss.backward()
             self.optimiser.step()
             
-            running_loss += loss.item()
-            training_loss.append(loss.item())
-            
-            if batch_idx % self.log_interval == self.log_interval-1:
-                print('[%d, %5d] loss: %.3f' % (epoch + 1, batch_idx + 1, running_loss / self.log_interval))
-                running_loss = 0.0
+            training_loss[f'{self.model.frame_count}_loss'].append(loss.item())
+            training_loss[f'{self.model.frame_count}_acc1'].append(acc1.item())
+            training_loss[f'{self.model.frame_count}_acc5'].append(acc5.item())
         
-        return np.array(training_loss)
+        return training_loss
 
-    def test(self, epoch):
+    def test_step(self) -> Dict[str, Any]:
 
-        running_loss = 0.0
-        test_loss = []
+        testing_loss = {
+            f'{self.model.frame_count}_loss': [],
+            f'{self.model.frame_count}_acc1': [],
+            f'{self.model.frame_count}_acc5': []
+        }
 
         for batch_idx, data in enumerate(self.testloader):
 
-            step_results = self._step(data)
+            step_results = self._step(self._sample_frames(data))
 
             loss = step_results['loss']
+            acc1 = step['verb_accuracy@1']
+            acc5 = step['verb_accuracy@5']
 
-            running_loss += loss.item()
-            test_loss.append(loss.item())
+            testing_loss[f'{self.model.frame_count}_loss'].append(loss.item())
+            testing_loss[f'{self.model.frame_count}_acc1'].append(acc1.item())
+            testing_loss[f'{self.model.frame_count}_acc5'].append(acc5.item())
 
-        return np.array(test_loss)
+        return testing_loss
 
     def save_parameters(self, path: Path):
         torch.save(self.model.state_dict(), path)

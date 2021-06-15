@@ -30,3 +30,5 @@ dependencies:
     - gulpio2==0.0.3
     - hydra_colorlog==1.0.0
     - moviepy==1.0.3
+    - torchvideo=0.0.1
+    - dash=1.20.0

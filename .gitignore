@@ -217,8 +217,9 @@ fabric.properties
 #####=== User ===#####
 /.idea
 
-# tomstark99
+# Workflow content
 *.ckpt
 *.pkl
+*.pt
 /notebooks/data/*
-
+/datasets/epic/*

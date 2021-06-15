@@ -2,7 +2,7 @@ import argparse
 import pickle
 import pandas as pd
 
-from gulpio2 import GulpDirectory
+from datasets.gulp_dataset import GulpDataset
 from pathlib import Path
 from typing import Dict, List
 
@@ -26,7 +26,7 @@ def main(args):
 
     verb_noun = {}
 
-    dataset = GulpDirectory(args.gulp_dir)
+    dataset = GulpDataset(args.gulp_dir)
 
     verb_noun = extract_verb_noun_links(
         dataset,
@@ -42,31 +42,30 @@ def main(args):
         }, f)
 
 def extract_verb_noun_links(
-    dataset: GulpDirectory,
+    dataset: GulpDataset,
     verbs: pd.DataFrame,
     nouns: pd.DataFrame,
     output_dict: Dict[str, List],
     classes: bool = False,
     narration: bool = False
 ):
-    for i, c in tqdm(
+    for i, (_, batch_labels) in tqdm(
         enumerate(dataset),
-        unit=" chunk",
-        total=dataset.num_chunks,
+        unit=" action seq",
+        total=len(dataset),
         dynamic_ncols=True
     ):
-        for _, batch_labels in c:
-            if classes:
-                if batch_labels['verb_class'] in output_dict:
-                    output_dict[batch_labels['verb_class']].append((batch_labels['noun_class'], batch_labels['narration_id']) if narration else batch_labels['noun_class'])
-                else:
-                    output_dict[batch_labels['verb_class']] = [(batch_labels['noun_class'], batch_labels['narration_id']) if narration else batch_labels['noun_class']]
+        if classes:
+            if batch_labels['verb_class'] in output_dict:
+                output_dict[batch_labels['verb_class']].append((batch_labels['noun_class'], batch_labels['narration_id']) if narration else batch_labels['noun_class'])
             else:
-                # lookup has to be performed to get the direct verb / noun rather than the instance
-                if verbs['key'][batch_labels['verb_class']] in output_dict:
-                    output_dict[verbs['key'][batch_labels['verb_class']]].append((nouns['key'][batch_labels['noun_class']], batch_labels['narration_id']) if narration else nouns['key'][batch_labels['noun_class']])
-                else:
-                    output_dict[verbs['key'][batch_labels['verb_class']]] = [(nouns['key'][batch_labels['noun_class']], batch_labels['narration_id']) if narration else nouns['key'][batch_labels['noun_class']]]
+                output_dict[batch_labels['verb_class']] = [(batch_labels['noun_class'], batch_labels['narration_id']) if narration else batch_labels['noun_class']]
+        else:
+            # lookup has to be performed to get the direct verb / noun rather than the instance
+            if verbs['key'][batch_labels['verb_class']] in output_dict:
+                output_dict[verbs['key'][batch_labels['verb_class']]].append((nouns['key'][batch_labels['noun_class']], batch_labels['narration_id']) if narration else nouns['key'][batch_labels['noun_class']])
+            else:
+                output_dict[verbs['key'][batch_labels['verb_class']]] = [(nouns['key'][batch_labels['noun_class']], batch_labels['narration_id']) if narration else nouns['key'][batch_labels['noun_class']]]
 
     return output_dict
 

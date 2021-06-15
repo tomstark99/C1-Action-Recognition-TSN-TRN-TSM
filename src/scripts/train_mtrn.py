@@ -14,7 +14,8 @@ from torch.utils.tensorboard import SummaryWriter
 
 from systems import EpicActionRecogintionShapleyClassifier
 
-from models.esvs import _MTRN
+from models.esvs import V_MTRN, N_MTRN
+
 from datasets.pickle_dataset import MultiPickleDataset
 from frame_sampling import RandomSampler
 
@@ -25,16 +26,21 @@ import plotly.graph_objects as go
 import numpy as np
 import pickle
 
+from livelossplot import PlotLosses
+
 parser = argparse.ArgumentParser(
     description="Extract per-frame features from given dataset and backbone",
     formatter_class=argparse.ArgumentDefaultsHelpFormatter
 )
-parser.add_argument("pickle_dir", type=Path, help="Path to pickle file to save features")
+parser.add_argument("features_pkl", type=Path, help="Path to pickle file to save features")
 parser.add_argument("results_pkl", type=Path, help="Path to save training results")
 parser.add_argument("model_params_dir", type=Path, help="Path to save model parameters (not file name)")
+parser.add_argument("--val_features_pkl", type=Path, help="Path to validation features pickle")
+parser.add_argument("--min_frames", type=int, default=1, help="min frames to train models for")
 parser.add_argument("--max_frames", type=int, default=8, help="max frames to train models for")
 parser.add_argument("--batch_size", type=int, default=512, help="mini-batch size of frame features to run through ")
 parser.add_argument("--epoch", type=int, default=100, help="How many epochs to do over the dataset")
+parser.add_argument("--type", type=str, default='verb', help="Which class to train")
 # parser.add_argument("--test", type=bool, default=False, help="Set test mode to true or false on the RandomSampler")
 # parser.add_argument("--log_interval", type=int, default=10, help="How many iterations between outputting running loss")
 # parser.add_argument("--n_frames", type=int, help="Number of frames for 2D CNN backbone")
@@ -55,18 +61,22 @@ def train_test_loader(dataset: MultiPickleDataset, batch_size: int, val_split: f
     return DataLoader(dataset, batch_size=batch_size, sampler=train_sampler, collate_fn=no_collate), DataLoader(dataset, batch_size=batch_size, sampler=test_sampler, collate_fn=no_collate)
 
 def main(args):
+    
+    if args.type == 'verb':
+        models = [V_MTRN(frame_count=i) for i in range(1,args.max_frames+1)]
+        optimisers = [Adam(m.parameters(), lr=1e-4) for m in models]
+        frame_samplers = [RandomSampler(frame_count=m.frame_count, snippet_length=1, test=False) for m in models]
+    elif args.type == 'noun':
+        models = [N_MTRN(frame_count=i) for i in range(1,args.max_frames+1)]
+        optimisers = [Adam(m.parameters(), lr=1e-4) for m in models]
+        frame_samplers = [RandomSampler(frame_count=m.frame_count, snippet_length=1, test=False) for m in models]
+    else:
+        raise ValueError(f"unknown type: {args.type}, known types are 'verb' and 'noun'")
 
-    models = [_MTRN(frame_count=i) for i in range(1,args.max_frames+1)]
-    optimisers = [Adam(m.parameters(), lr=1e-4) for m in models]
-    frame_samplers = [RandomSampler(frame_count=m.frame_count, snippet_length=1, test=False) for m in models]
-
-    dataset = MultiPickleDataset(args.pickle_dir)
+    dataset = MultiPickleDataset(args.features_pkl)
 
     results = train(
-        args.epoch,
-        args.max_frames,
-        args.batch_size,
-        args.model_params_dir,
+        args,
         dataset,
         models,
         optimisers,
@@ -81,33 +91,40 @@ def test():
     return 0
 
 def train(
-    epochs: int,
-    max_frames: int,
-    batch_size: int,
-    model_path: Path,
+    args,
     dataset: Dataset,
     models: List[nn.Module],
     optimisers: List[Adam],
-    frame_samplers: List[RandomSampler]
+    frame_samplers: List[RandomSampler],
 ):
     assert len(models) == len(optimisers)
     assert len(models) == len(frame_samplers)
 
-    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    device = torch.device("cuda:0")
     dtype = torch.float
 
-    trainloader, testloader = train_test_loader(dataset, batch_size, 0.3)
-    writer = SummaryWriter(f'datasets/epic/runs/epic_mtrn_max-frames:{max_frames}'f'_epochs:{epochs}'f'_batch_size{batch_size}')
+    if args.val_features_pkl:
+        trainloader = DataLoader(MultiPickleDataset(args.features_pkl), batch_size=args.batch_size, collate_fn=no_collate)
+        testloader = DataLoader(MultiPickleDataset(args.val_features_pkl), batch_size=args.batch_size, collate_fn=no_collate)
+    else:
+        trainloader, testloader = train_test_loader(dataset, args.batch_size, 0.3)
+
+    writer = SummaryWriter(f'datasets/epic/runs/epic_mtrn_max-frames={args.max_frames}'f'_epochs={args.epoch}'f'_batch_size={args.batch_size}'f'_type={args.type}')
 
     training_result = []
     testing_result = []
 
-    for m, o, f in zip(models, optimisers, frame_samplers):
+    for i in tqdm( # m, o, f
+        # zip(models, optimisers, frame_samplers),
+        range(args.min_frames-1, args.max_frames),
+        unit=" model",
+        dynamic_ncols=True
+    ):
         classifier = EpicActionRecogintionShapleyClassifier(
-            m,
+            models[i].to(device),
             device,
-            o,
-            f,
+            optimisers[i],
+            frame_samplers[i],
             trainloader,
             testloader
         )
@@ -129,52 +146,65 @@ def train(
             'epoch_acc5': []
         }
 
+        liveloss = PlotLosses()
+
         for epoch in tqdm(
-            range(epochs),
+            range(args.epoch),
             unit=" epoch",
             dynamic_ncols=True
         ):
+            logs = {}
 
             train_result = classifier.train_step()
 
-            epoch_loss = sum(train_result[f'{m.frame_count}_loss']) / len(trainloader)
-            epoch_acc1 = sum(train_result[f'{m.frame_count}_acc1']) / len(trainloader)
-            epoch_acc5 = sum(train_result[f'{m.frame_count}_acc5']) / len(trainloader)
+            epoch_loss = sum(train_result[f'{models[i].frame_count}_loss']) / len(trainloader)
+            epoch_acc1 = sum(train_result[f'{models[i].frame_count}_acc1']) / len(trainloader)
+            epoch_acc5 = sum(train_result[f'{models[i].frame_count}_acc5']) / len(trainloader)
 
-            model_train_results['running_loss'].append(train_result[f'{m.frame_count}_loss'])
-            model_train_results['running_acc1'].append(train_result[f'{m.frame_count}_acc1'])
-            model_train_results['running_acc5'].append(train_result[f'{m.frame_count}_acc5'])
+            model_train_results['running_loss'].append(train_result[f'{models[i].frame_count}_loss'])
+            model_train_results['running_acc1'].append(train_result[f'{models[i].frame_count}_acc1'])
+            model_train_results['running_acc5'].append(train_result[f'{models[i].frame_count}_acc5'])
             model_train_results['epoch_loss'].append(epoch_loss)
             model_train_results['epoch_acc1'].append(epoch_acc1)
             model_train_results['epoch_acc5'].append(epoch_acc5)
 
-            writer.add_scalar(f'training loss frames={m.frame_count}', epoch_loss, epoch)
-            writer.add_scalars('combined training loss', {f'loss frames={m.frame_count}': epoch_loss}, epoch)
-            writer.add_scalars(f'training accuracy frames={m.frame_count}', {'acc1': epoch_acc1, 'acc5': epoch_acc5}, epoch)
-            writer.add_scalars('combined training accuracy', {f'acc1 frames={m.frame_count}': epoch_acc1, f'acc5 frames={m.frame_count}': epoch_acc5}, epoch)
+            writer.add_scalar(f'training loss frames={models[i].frame_count}', epoch_loss, epoch)
+            writer.add_scalars('combined training loss', {f'loss frames={models[i].frame_count}': epoch_loss}, epoch)
+            writer.add_scalars(f'training accuracy frames={models[i].frame_count}', {'acc1': epoch_acc1, 'acc5': epoch_acc5}, epoch)
+            writer.add_scalars('combined training accuracy', {f'acc1 frames={models[i].frame_count}': epoch_acc1, f'acc5 frames={models[i].frame_count}': epoch_acc5}, epoch)
 
-            test_result = classifier.train_step()
+            test_result = classifier.test_step()
 
-            epoch_loss_ = sum(test_result[f'{m.frame_count}_loss']) / len(testloader)
-            epoch_acc1_ = sum(test_result[f'{m.frame_count}_acc1']) / len(testloader)
-            epoch_acc5_ = sum(test_result[f'{m.frame_count}_acc5']) / len(testloader)
+            epoch_loss_ = sum(test_result[f'{models[i].frame_count}_loss']) / len(testloader)
+            epoch_acc1_ = sum(test_result[f'{models[i].frame_count}_acc1']) / len(testloader)
+            epoch_acc5_ = sum(test_result[f'{models[i].frame_count}_acc5']) / len(testloader)
 
-            model_test_results['running_loss'].append(test_result[f'{m.frame_count}_loss'])
-            model_test_results['running_acc1'].append(test_result[f'{m.frame_count}_acc1'])
-            model_test_results['running_acc5'].append(test_result[f'{m.frame_count}_acc5'])
+            model_test_results['running_loss'].append(test_result[f'{models[i].frame_count}_loss'])
+            model_test_results['running_acc1'].append(test_result[f'{models[i].frame_count}_acc1'])
+            model_test_results['running_acc5'].append(test_result[f'{models[i].frame_count}_acc5'])
             model_test_results['epoch_loss'].append(epoch_loss_)
             model_test_results['epoch_acc1'].append(epoch_acc1_)
             model_test_results['epoch_acc5'].append(epoch_acc5_)
 
-            writer.add_scalar(f'testing loss frames={m.frame_count}', epoch_loss_, epoch)
-            writer.add_scalars('combined testing loss', {f'loss frames={m.frame_count}': epoch_loss_}, epoch)
-            writer.add_scalars(f'testing accuracy frames={m.frame_count}', {'acc1': epoch_acc1_, 'acc5': epoch_acc5_}, epoch)
-            writer.add_scalars('combined testing accuracy', {f'acc1 frames={m.frame_count}': epoch_acc1_, f'acc5 frames={m.frame_count}': epoch_acc5_}, epoch)
+            writer.add_scalar(f'testing loss frames={models[i].frame_count}', epoch_loss_, epoch)
+            writer.add_scalars('combined testing loss', {f'loss frames={models[i].frame_count}': epoch_loss_}, epoch)
+            writer.add_scalars(f'testing accuracy frames={models[i].frame_count}', {'acc1': epoch_acc1_, 'acc5': epoch_acc5_}, epoch)
+            writer.add_scalars('combined testing accuracy', {f'acc1 frames={models[i].frame_count}': epoch_acc1_, f'acc5 frames={models[i].frame_count}': epoch_acc5_}, epoch)
+
+            logs['loss'] = epoch_loss
+            logs['accuracy'] = epoch_acc1
+            logs['accuracy_5'] = epoch_acc5
+            logs['val_loss'] = epoch_loss_
+            logs['val_accuracy'] = epoch_acc1_
+            logs['val_accuracy_5'] = epoch_acc5_
+
+            liveloss.update(logs)
+            liveloss.send()
 
         training_result.append(model_train_results)
         testing_result.append(model_test_results)
 
-        classifier.save_parameters(model_path / f'mtrn-frames={m.frame_count}.pt')
+        classifier.save_parameters(args.model_params_dir / f'mtrn-frames={models[i].frame_count}'f'-type={args.type}.pt')
     
     return {'training': training_result, 'testing': testing_result}
 

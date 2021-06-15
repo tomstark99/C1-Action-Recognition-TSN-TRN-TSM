@@ -62,8 +62,6 @@ class ShapleyValueResults:
             scores=[scores[example_idx] for scores in self.scores],
             uid=self.uids[example_idx],
             label=self.labels[example_idx],
-            sequence_idxs=[
-                sequence_idxs[example_idx] for sequence_idxs in self.sequence_idxs
-            ],
+            sequence_idxs=[sequence_idxs[example_idx] for sequence_idxs in self.sequence_idxs],
             results_idx=example_idx,
         )

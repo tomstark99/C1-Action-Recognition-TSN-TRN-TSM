@@ -384,7 +384,7 @@ class EpicActionRecogintionShapleyClassifier:
             'verb': {
                 'output': outputs,
                 'preds': outputs.argmax(-1),
-                'labels': labels['verb_class'],#.to(self.device),
+                'labels': labels['verb_class'].to(self.device),
                 'weight': 1
             }
         }
@@ -392,10 +392,10 @@ class EpicActionRecogintionShapleyClassifier:
         loss = 0.0
         n_tasks = len(tasks)
         for task, d in tasks.items():
-            task_loss = F.cross_entropy(d['output'], d['labels'].to(self.device))
+            task_loss = F.cross_entropy(d['output'], d['labels'])
             loss += d['weight'] * task_loss
             
-            accuracy_1, accuracy_5 = accuracy(d["output"], d["labels"].to(self.device), ks=(1, 5))
+            accuracy_1, accuracy_5 = accuracy(d["output"], d["labels"], ks=(1, 5))
             step_results[f"{task}_accuracy@1"] = accuracy_1
             step_results[f"{task}_accuracy@5"] = accuracy_5
 
@@ -450,8 +450,8 @@ class EpicActionRecogintionShapleyClassifier:
             step_results = self._step(self._sample_frames(data))
 
             loss = step_results['loss']
-            acc1 = step['verb_accuracy@1']
-            acc5 = step['verb_accuracy@5']
+            acc1 = step_results['verb_accuracy@1']
+            acc5 = step_results['verb_accuracy@5']
 
             loss.backward()
             self.optimiser.step()
@@ -475,8 +475,8 @@ class EpicActionRecogintionShapleyClassifier:
             step_results = self._step(self._sample_frames(data))
 
             loss = step_results['loss']
-            acc1 = step['verb_accuracy@1']
-            acc5 = step['verb_accuracy@5']
+            acc1 = step_results['verb_accuracy@1']
+            acc5 = step_results['verb_accuracy@5']
 
             testing_loss[f'{self.model.frame_count}_loss'].append(loss.item())
             testing_loss[f'{self.model.frame_count}_acc1'].append(acc1.item())

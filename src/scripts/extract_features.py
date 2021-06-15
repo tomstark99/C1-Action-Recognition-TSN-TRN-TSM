@@ -28,7 +28,7 @@ parser = argparse.ArgumentParser(
 parser.add_argument("gulp_dir", type=Path, help="Path to gulp directory")
 parser.add_argument("checkpoint", type=Path, help="Path to model checkpoint")
 parser.add_argument("features_pickle", type=Path, help="Path to pickle file to save features")
-parser.add_argument("--num_workers", type=int, default=1, help="Number of features expected from frame")
+parser.add_argument("--num_workers", type=int, default=0, help="Number of features expected from frame")
 parser.add_argument("--batch_size", type=int, default=128, help="Max frames to run through backbone 2D CNN at a time")
 parser.add_argument("--feature_dim", type=int, default=256, help="Number of features expected from frame")
 
@@ -36,6 +36,8 @@ def main(args):
 
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
     dtype = torch.float
+
+    torch.multiprocessing.set_sharing_strategy('file_system')
 
     ckpt = torch.load(args.checkpoint, map_location='cpu')
     cfg = OmegaConf.create(ckpt['hyper_parameters'])
@@ -67,7 +69,7 @@ def extract_features_to_pkl(
     total_instances = 0
     
     dataloader = feature_extractor.get_dataloader(num_workers=num_workers)
-    torch.multiprocessing.set_sharing_strategy('file_system')
+    
 
     total_instances += feature_extractor.extract(dataloader, feature_writer)
     feature_writer.save()

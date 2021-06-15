@@ -115,6 +115,29 @@ $ python src/gulp_data.py \
 Check out `notebooks/dataset.ipynb` to visualise the gulped RGB and optical flow as
 a sanity check.
 
+## Extracting features
+
+As computing ESVs is expensive, requiring many thousands of model evaluations, we work with temporal models that operate over features. We can run these in a reasonable amount of time, in the order of milliseconds--seconds depending on number of frames and whether approximate methods are used or not.
+
+We provide a script to extract per-frame features, saving them to an PKL file. Extract these features for TRN
+
+```bash
+$ python src/scripts/extract_features.py \
+    gulp/rgb_train \
+    path/to/model/ckpt/file \
+    features/train_features.pkl
+    
+$ python src/scripts/extract_features.py \
+    gulp/rgb_test \
+    path/to/model/ckpt/file \
+    features/test_features.pkl
+
+$ python src/scripts/extract_features.py \
+    gulp/rgb_validation \
+    path/to/model/ckpt/file \
+    features/validation_features.pkl
+```
+
 ## Training
 
 We provide configurations for training the models to

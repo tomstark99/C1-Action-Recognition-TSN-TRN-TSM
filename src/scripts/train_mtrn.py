@@ -62,12 +62,15 @@ def train_test_loader(dataset: MultiPickleDataset, batch_size: int, val_split: f
 
 def main(args):
     
+    device = torch.device("cuda:0")
+    dtype = torch.float
+    
     if args.type == 'verb':
-        models = [V_MTRN(frame_count=i) for i in range(1,args.max_frames+1)]
+        models = [V_MTRN(frame_count=i).to(device) for i in range(1,args.max_frames+1)]
         optimisers = [Adam(m.parameters(), lr=1e-4) for m in models]
         frame_samplers = [RandomSampler(frame_count=m.frame_count, snippet_length=1, test=False) for m in models]
     elif args.type == 'noun':
-        models = [N_MTRN(frame_count=i) for i in range(1,args.max_frames+1)]
+        models = [N_MTRN(frame_count=i).to(device) for i in range(1,args.max_frames+1)]
         optimisers = [Adam(m.parameters(), lr=1e-4) for m in models]
         frame_samplers = [RandomSampler(frame_count=m.frame_count, snippet_length=1, test=False) for m in models]
     else:
@@ -75,7 +78,7 @@ def main(args):
 
     dataset = MultiPickleDataset(args.features_pkl)
 
-    results = train(
+    train(
         args,
         dataset,
         models,
@@ -83,8 +86,8 @@ def main(args):
         frame_samplers
     )
 
-    with open(args.results_pkl, 'wb') as f:
-        pickle.dump(results, f)
+    # with open(args.results_pkl, 'wb') as f:
+    #     pickle.dump(results, f)
     
 
 def test():
@@ -100,8 +103,7 @@ def train(
     assert len(models) == len(optimisers)
     assert len(models) == len(frame_samplers)
 
-    device = torch.device("cuda:0")
-    dtype = torch.float
+    
 
     if args.val_features_pkl:
         trainloader = DataLoader(MultiPickleDataset(args.features_pkl), batch_size=args.batch_size, collate_fn=no_collate)
@@ -121,30 +123,30 @@ def train(
         dynamic_ncols=True
     ):
         classifier = EpicActionRecogintionShapleyClassifier(
-            models[i].to(device),
-            device,
+            models[i],
+            torch.device("cuda:0"),
             optimisers[i],
             frame_samplers[i],
             trainloader,
             testloader
         )
 
-        model_train_results = {
-            'running_loss': [],
-            'running_acc1': [],
-            'running_acc5': [],
-            'epoch_loss': [],
-            'epoch_acc1': [],
-            'epoch_acc5': []
-        }
-        model_test_results = {
-            'running_loss': [],
-            'running_acc1': [],
-            'running_acc5': [],
-            'epoch_loss': [],
-            'epoch_acc1': [],
-            'epoch_acc5': []
-        }
+        # model_train_results = {
+        #     'running_loss': [],
+        #     'running_acc1': [],
+        #     'running_acc5': [],
+        #     'epoch_loss': [],
+        #     'epoch_acc1': [],
+        #     'epoch_acc5': []
+        # }
+        # model_test_results = {
+        #     'running_loss': [],
+        #     'running_acc1': [],
+        #     'running_acc5': [],
+        #     'epoch_loss': [],
+        #     'epoch_acc1': [],
+        #     'epoch_acc5': []
+        # }
 
         liveloss = PlotLosses()
 
@@ -161,12 +163,12 @@ def train(
             epoch_acc1 = sum(train_result[f'{models[i].frame_count}_acc1']) / len(trainloader)
             epoch_acc5 = sum(train_result[f'{models[i].frame_count}_acc5']) / len(trainloader)
 
-            model_train_results['running_loss'].append(train_result[f'{models[i].frame_count}_loss'])
-            model_train_results['running_acc1'].append(train_result[f'{models[i].frame_count}_acc1'])
-            model_train_results['running_acc5'].append(train_result[f'{models[i].frame_count}_acc5'])
-            model_train_results['epoch_loss'].append(epoch_loss)
-            model_train_results['epoch_acc1'].append(epoch_acc1)
-            model_train_results['epoch_acc5'].append(epoch_acc5)
+            # model_train_results['running_loss'].append(train_result[f'{models[i].frame_count}_loss'])
+            # model_train_results['running_acc1'].append(train_result[f'{models[i].frame_count}_acc1'])
+            # model_train_results['running_acc5'].append(train_result[f'{models[i].frame_count}_acc5'])
+            # model_train_results['epoch_loss'].append(epoch_loss)
+            # model_train_results['epoch_acc1'].append(epoch_acc1)
+            # model_train_results['epoch_acc5'].append(epoch_acc5)
 
             writer.add_scalar(f'training loss frames={models[i].frame_count}', epoch_loss, epoch)
             writer.add_scalars('combined training loss', {f'loss frames={models[i].frame_count}': epoch_loss}, epoch)
@@ -179,12 +181,12 @@ def train(
             epoch_acc1_ = sum(test_result[f'{models[i].frame_count}_acc1']) / len(testloader)
             epoch_acc5_ = sum(test_result[f'{models[i].frame_count}_acc5']) / len(testloader)
 
-            model_test_results['running_loss'].append(test_result[f'{models[i].frame_count}_loss'])
-            model_test_results['running_acc1'].append(test_result[f'{models[i].frame_count}_acc1'])
-            model_test_results['running_acc5'].append(test_result[f'{models[i].frame_count}_acc5'])
-            model_test_results['epoch_loss'].append(epoch_loss_)
-            model_test_results['epoch_acc1'].append(epoch_acc1_)
-            model_test_results['epoch_acc5'].append(epoch_acc5_)
+            # model_test_results['running_loss'].append(test_result[f'{models[i].frame_count}_loss'])
+            # model_test_results['running_acc1'].append(test_result[f'{models[i].frame_count}_acc1'])
+            # model_test_results['running_acc5'].append(test_result[f'{models[i].frame_count}_acc5'])
+            # model_test_results['epoch_loss'].append(epoch_loss_)
+            # model_test_results['epoch_acc1'].append(epoch_acc1_)
+            # model_test_results['epoch_acc5'].append(epoch_acc5_)
 
             writer.add_scalar(f'testing loss frames={models[i].frame_count}', epoch_loss_, epoch)
             writer.add_scalars('combined testing loss', {f'loss frames={models[i].frame_count}': epoch_loss_}, epoch)
@@ -201,12 +203,12 @@ def train(
             liveloss.update(logs)
             liveloss.send()
 
-        training_result.append(model_train_results)
-        testing_result.append(model_test_results)
+        # training_result.append(model_train_results)
+        # testing_result.append(model_test_results)
 
         classifier.save_parameters(args.model_params_dir / f'mtrn-frames={models[i].frame_count}'f'-type={args.type}.pt')
     
-    return {'training': training_result, 'testing': testing_result}
+    # return {'training': training_result, 'testing': testing_result}
 
     # if args.save_params:
     #     classifier.save_parameters(args.save_params)

@@ -437,7 +437,8 @@ class EpicActionRecogintionShapleyClassifier:
         return split_task_outputs(self(xs), TASK_CLASS_COUNTS)
         
     def train_step(self) -> Dict[str, Any]:
-        # self.model.train()
+
+        self.model.train()
         training_loss = {
             f'{self.model.frame_count}_loss': [],
             f'{self.model.frame_count}_acc1': [],
@@ -456,14 +457,15 @@ class EpicActionRecogintionShapleyClassifier:
             loss.backward()
             self.optimiser.step()
             
-            training_loss[f'{self.model.frame_count}_loss'].append(loss.item())
-            training_loss[f'{self.model.frame_count}_acc1'].append(acc1.item())
-            training_loss[f'{self.model.frame_count}_acc5'].append(acc5.item())
+            training_loss[f'{self.model.frame_count}_loss'].append(loss.detach().item())
+            training_loss[f'{self.model.frame_count}_acc1'].append(acc1.detach().item())
+            training_loss[f'{self.model.frame_count}_acc5'].append(acc5.detach().item())
         
         return training_loss
 
     def test_step(self) -> Dict[str, Any]:
 
+        self.model.eval()
         testing_loss = {
             f'{self.model.frame_count}_loss': [],
             f'{self.model.frame_count}_acc1': [],
@@ -478,9 +480,9 @@ class EpicActionRecogintionShapleyClassifier:
             acc1 = step_results['verb_accuracy@1']
             acc5 = step_results['verb_accuracy@5']
 
-            testing_loss[f'{self.model.frame_count}_loss'].append(loss.item())
-            testing_loss[f'{self.model.frame_count}_acc1'].append(acc1.item())
-            testing_loss[f'{self.model.frame_count}_acc5'].append(acc5.item())
+            testing_loss[f'{self.model.frame_count}_loss'].append(loss.detach().item())
+            testing_loss[f'{self.model.frame_count}_acc1'].append(acc1.detach().item())
+            testing_loss[f'{self.model.frame_count}_acc5'].append(acc5.detach().item())
 
         return testing_loss
 
